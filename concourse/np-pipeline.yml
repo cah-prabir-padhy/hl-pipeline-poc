@@ -1,0 +1,31 @@
+---
+artifacts-creds: &artifacts-creds
+  username: ((artifacts.username))
+  password: ((artifacts.password))
+
+github-creds: &github-creds
+  username: ((github.username))
+  password: ((github.personal_access_token))
+
+groups:
+  - name: main
+    jobs:
+      - build
+      - unit-tests
+      - sonar-scan
+      - deploy-app
+  - name: release-artifacts
+    jobs:
+      - build
+      - veracode-scan-report
+      - publish-artifacts
+
+resources:
+  - name: git-source
+    source:
+      branch: develop
+      uri: https://github.com/cahcommercial/connect-bulk-user-onboarding-utility.git
+      <<: *github-creds
+      type: git
+      icon: git
+      check_every: 15m

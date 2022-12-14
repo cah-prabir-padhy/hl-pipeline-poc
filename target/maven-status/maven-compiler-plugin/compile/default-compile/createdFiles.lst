@@ -1,0 +1,7 @@
+com/hldemo/BookController.class
+com/hldemo/error/BookNotFoundException.class
+com/hldemo/error/CustomGlobalExceptionHandler.class
+com/hldemo/StartBookApplication.class
+com/hldemo/error/BookUnSupportedFieldPatchException.class
+com/hldemo/Book.class
+com/hldemo/BookRepository.class
