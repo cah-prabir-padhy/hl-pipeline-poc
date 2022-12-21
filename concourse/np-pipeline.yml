@@ -13,19 +13,255 @@ groups:
       - build
       - unit-tests
       - sonar-scan
-      - deploy-app
-  - name: release-artifacts
-    jobs:
-      - build
-      - veracode-scan-report
-      - publish-artifacts
+      - sonar-scan-analysis
 
 resources:
-  - name: git-source
+  - name: spring-boot-service
     source:
-      branch: develop
+      branch: main
       uri: https://github.com/cahcommercial/connect-bulk-user-onboarding-utility.git
       <<: *github-creds
       type: git
       icon: git
       check_every: 15m
+
+  - name: np1-pcf-deploy
+    type: cf
+    source:
+      api: api.system.np1.fuseapps.io
+      username: ((program-config-build.cf-username))
+      password: ((program-config-build.cf-password))
+      organization: ((program-config-build.cf-organization))
+      space: ((program-config-build.cf-space))
+      skip_cert_check: false
+
+  - name: slack-alert
+    type: slack-notification
+    icon: slack
+    source:
+      url: ((program-config-build.program-config-slack-webhook-url))
+
+  - name: code-analysis
+    type: sonar-runner
+    source:
+      host_url: https://sonarqube.cahcommtech.com/
+      login: ((b33ef868b434cfc85f4ff79eb04d8e48b98eedb3))
+
+  - name: sonarqube
+    type: sonarqube-notifier
+    source:
+      target: https://sonarqube.cahcommtech.com/
+      sonartoken: ((b33ef868b434cfc85f4ff79eb04d8e48b98eedb3))
+      component: my:component
+      metrics: ncloc,complexity,violations,coverage
+
+  - name: veracode-scan
+    type: veracode
+    source:
+      api_id: ((program-config-build.veracode-api-id))
+      api_key: ((program-config-build.veracode-api-key))
+      app_name: spring-rest-sample
+
+resource_types:
+  - name: slack-notification
+    type: registry-image
+    source:
+      repository: cfcommunity/slack-notification-resource
+      tag: latest
+
+  - name: veracode
+    type: docker-image
+    source:
+      repository: artifacts.cahcommtech.com/concourse/common/veracode
+      tag: latest
+      <<: *artifacts-creds
+
+  - name: pull-request
+    type: registry-image
+    source:
+      repository:  artifacts.cahcommtech.com/fuse/pr
+      <<: *artifacts-creds
+
+  - name: maven-resource
+    type: registry-image
+    source:
+      repository: artifacts.cahcommtech.com/maven-resource
+      <<: *artifacts-creds
+
+  - name: sonar-runner
+    type: docker-image
+    source:
+      repository: cathive/concourse-sonarqube-resource
+      tag: latest
+
+  - name: sonarqube-notifier
+    type: docker-image
+    source:
+      repository: lgohr/sonarqube
+      tag: latest
+
+build-and-pack: &build-and-pack
+  on_success:
+    put: slack-alert
+    params:
+      text: "POC build and pack is successful in staging"
+  on_failure:
+    put: slack-alert
+    params:
+      text: "POC build and pack failed in staging... FIX IT, FIX IT, FIX IT!!!"
+  config:
+    image_resource:
+      source:
+        repository: maven
+        tag: jdk11-alpine
+      type: docker-image
+    inputs:
+      - name: spring-boot-service
+    outputs:
+      - name: spring-boot-service
+        path: spring-boot-service
+    params:
+      NEXUS_PUBLISH_REGISTRY_URL: https://((artifacts.url))/repository/commtech-npmjs-internal/
+      NEXUS_PUBLISH_EMAIL: ((policy-config-build.email))
+      NEXUS_PUBLISH_USERNAME: ((artifacts.username))
+      NEXUS_PUBLISH_PASSWORD: ((artifacts.password))
+    platform: linux
+    run:
+      args:
+        - -c
+        - |
+          cd spring-boot-service
+          ls -l
+          export ROOT_FOLDER=$( pwd )
+          mvn clean package
+          ls -l
+      path: /bin/sh
+
+
+run-unit-test: &run-unit-test
+  on_success:
+    put: slack-alert
+    params:
+      text: "POC build and pack is successful in staging"
+  on_failure:
+    put: slack-alert
+    params:
+      text: "POC build and pack failed in staging... FIX IT, FIX IT, FIX IT!!!"
+  config:
+    image_resource:
+      source:
+        repository: maven
+        tag: jdk11-alpine
+      type: docker-image
+    inputs:
+      - name: spring-boot-service
+    outputs:
+      - name: spring-boot-service
+        path: spring-boot-service
+    params:
+      NEXUS_PUBLISH_REGISTRY_URL: https://((artifacts.url))/repository/commtech-npmjs-internal/
+      NEXUS_PUBLISH_EMAIL: ((policy-config-build.email))
+      NEXUS_PUBLISH_USERNAME: ((artifacts.username))
+      NEXUS_PUBLISH_PASSWORD: ((artifacts.password))
+    platform: linux
+    run:
+      args:
+        - -c
+        - |
+          cd spring-boot-service
+          ls -l
+          export ROOT_FOLDER=$( pwd )
+          mvn test
+          ls -l
+      path: /bin/sh
+
+check-sonarqube-quality-gate: &check-sonarqube-quality-gate
+  on_success:
+    put: slack-alert
+    params:
+      text: "POC build and pack is successful in staging"
+  on_failure:
+    put: slack-alert
+    params:
+      text: "POC build and pack failed in staging... FIX IT, FIX IT, FIX IT!!!"
+  config:
+    image_resource:
+      source:
+        repository: cathive/concourse-sonarqube-qualitygate-task
+        tag: latest
+      type: docker-image
+    inputs:
+      - name: code-analysis
+    outputs:
+      - name: spring-boot-service
+        path: spring-boot-service
+    params:
+      NEXUS_PUBLISH_REGISTRY_URL: https://((artifacts.url))/repository/commtech-npmjs-internal/
+      NEXUS_PUBLISH_EMAIL: ((policy-config-build.email))
+      NEXUS_PUBLISH_USERNAME: ((artifacts.username))
+      NEXUS_PUBLISH_PASSWORD: ((artifacts.password))
+    platform: linux
+    run:
+      args:
+        - -c
+        - |
+          cd spring-boot-service
+          ls -l
+          export ROOT_FOLDER=$( pwd )
+          mvn test
+          ls -l
+      path: /bin/sh
+
+
+jobs:
+  - name: build
+    serial: true
+    public: false
+    plan:
+      - get: spring-boot-service
+        trigger: true
+      - task: build-and-pack
+        <<: *build-and-pack
+
+  - name: unit-tests
+    serial: true
+    public: false
+    plan:
+      - get: spring-boot-service
+        trigger: true
+      - task: run-unit-test
+        <<: *run-unit-test
+
+  - name: sonar-scan
+    serial: true
+    public: false
+    plan:
+      - get: spring-boot-service
+        trigger: true
+      - put: code-analysis
+        params:
+          project_path: spring-boot-service
+          project_key: spring-rest-sample
+          sources: [ "." ]
+          tests: [ "." ]
+        get_params:
+          quality_gate:
+            ignore_errors: [ 'new_coverage', 'violations' ]
+            ignore_warns: [ 'new_duplicated_lines_density', 'violations' ]
+
+  - name: sonar-scan-analysis
+    plan:
+      - get: sonarqube
+        trigger: true
+      - task: show-result
+        config:
+          platform: linux
+          image_resource:
+            type: docker-image
+            source: { repository: busybox }
+          inputs:
+            - name: sonarqube
+          run:
+            path: cat
+            args: [ sonarqube/result.json ]
+
